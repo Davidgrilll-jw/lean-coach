@@ -5,7 +5,9 @@ import * as v from '../domain/validate.js';
 import { MUSCLES, exerciseHistory, muscleSets, progressionAdvice, recoveryConflicts, workoutDays } from '../domain/workout.js';
 import * as repo from '../store/repo.js';
 import { lineChart } from '../ui/charts.js';
+import { EXERCISE_GUIDE } from '../data/exerciseGuide.js';
 import { confirmDialog, emptyState, esc, formValues, handleError, icon, n0, n1, openModal, toast } from '../ui/dom.js';
+import { exerciseArt, hasArt } from '../ui/exerciseArt.js';
 
 let rest = null; // { until: epoch ms, total: seconds }
 let ticker = null;
@@ -41,6 +43,27 @@ function startTicker(root) {
   };
   paint();
   ticker = setInterval(paint, 500);
+}
+
+/** How-to sheet: start/end illustration, muscles, form cues and a link to video results. */
+function openExerciseGuide(ex) {
+  if (!ex) return;
+  const guide = EXERCISE_GUIDE[ex.id];
+  const query = encodeURIComponent(`${ex.name.replace(/\s*\(.*?\)\s*/g, ' ').trim()} proper form`);
+  const secondary = (ex.secondary || []).map((m) => MUSCLES[m]).filter(Boolean);
+  openModal({
+    title: ex.name,
+    html: `
+      ${guide ? exerciseArt(ex.id, { label: esc(ex.name) }) : '<div class="notice">ท่านี้เป็นท่าที่สร้างเอง จึงไม่มีภาพประกอบ</div>'}
+      ${guide ? `<p class="hint" style="text-align:center">${guide.poses.length > 1 ? 'ท่าเริ่ม → ท่าจบ' : 'ค้างท่านี้ไว้'} · ภาพวาดอย่างง่ายเพื่อให้นึกท่าออก ไม่ใช่ภาพสอนฟอร์มละเอียด</p>` : ''}
+      <div><div class="muscles">${muscleBadges(ex)}</div>${secondary.length ? `<p class="small muted" style="margin-top:6px">กล้ามเนื้อรอง: ${secondary.join(', ')}</p>` : ''}</div>
+      ${guide ? `<ol class="cues">${guide.cues.map((c) => `<li>${esc(c)}</li>`).join('')}</ol>` : ''}
+      <div class="btn-row">
+        <a class="btn btn-outline" target="_blank" rel="noopener noreferrer" href="https://www.youtube.com/results?search_query=${query}">ดูวิดีโอสอนท่านี้</a>
+        <button type="button" class="btn btn-primary" data-close>ปิด</button>
+      </div>
+      <p class="hint">ปุ่มวิดีโอจะเปิดผลค้นหาใน YouTube หยุดทำทันทีถ้ารู้สึกเจ็บแปลบที่ข้อต่อหรือหลัง</p>`,
+  });
 }
 
 // ---------- start / log / finish ----------
@@ -461,6 +484,8 @@ function renderActive(root, app, session) {
             <div><h2>${esc(item.name)}</h2><div class="muscles" style="margin-top:4px">${muscleBadges(ex.get(item.exerciseId))}</div></div>
             <span class="badge ${complete ? 'badge-ok' : ''}">${done.length}/${item.sets} เซต</span>
           </div>
+          ${hasArt(item.exerciseId) ? `<button type="button" class="art-btn" data-act="guide" data-id="${item.exerciseId}" aria-label="ดูวิธีทำ ${esc(item.name)}">${exerciseArt(item.exerciseId, { label: esc(item.name) })}</button>` : ''}
+          <div class="btn-row start" style="margin:6px 0"><button type="button" class="btn btn-ghost btn-sm" data-act="guide" data-id="${item.exerciseId}">${icon('info')}วิธีทำ</button></div>
           <p class="small muted">เป้าหมาย ${item.sets} เซต × ${item.repMin}–${item.repMax} ${unitLabel(item.unit)} · พัก ${item.restSec} วินาที</p>
           <p class="small muted">${last ? `ครั้งก่อน (${fmtShort(last.date)}): ${last.sets.map((s) => setText(s, item.unit)).join(', ')}` : 'ยังไม่เคยบันทึกท่านี้'}</p>
           <div class="notice" style="margin:8px 0">${esc(advice.text)}</div>
@@ -520,7 +545,8 @@ function renderActive(root, app, session) {
       } else if (act === 'del-set') {
         await repo.save('workoutSessions', { ...session, sets: session.sets.filter((s) => s.id !== id) });
         app.refresh();
-      } else if (act === 'add-ex') openAddExerciseModal(app, session);
+      } else if (act === 'guide') openExerciseGuide(ex.get(id));
+      else if (act === 'add-ex') openAddExerciseModal(app, session);
       else if (act === 'skip-rest') {
         rest = null;
         root.querySelector('#rest-bar').hidden = true;
@@ -584,7 +610,12 @@ function renderHome(root, app) {
                   <div class="list">${p.exercises
                     .map((r) => {
                       const e = ex.get(r.exerciseId);
-                      return e ? `<div class="row" style="padding:7px 0"><div class="row-main"><div class="row-title" style="font-weight:550">${esc(e.name)}</div><div class="row-sub">${(e.muscles || []).map((m) => MUSCLES[m]).join(', ')}</div></div><div class="row-value small">${r.sets} × ${r.repMin}–${r.repMax}</div></div>` : '';
+                      return e
+                        ? `<div class="row" style="padding:7px 0"><button class="row-btn" data-act="guide" data-id="${e.id}" aria-label="ดูวิธีทำ ${esc(e.name)}">
+                            ${exerciseArt(e.id, { single: true, label: '' })}
+                            <div class="row-main"><div class="row-title" style="font-weight:550">${esc(e.name)}</div><div class="row-sub">${(e.muscles || []).map((m) => MUSCLES[m]).join(', ')}</div></div>
+                            <div class="row-value small">${r.sets} × ${r.repMin}–${r.repMax}</div></button></div>`
+                        : '';
                     })
                     .join('')}</div>
                   <div class="btn-row">
@@ -657,6 +688,7 @@ function renderHome(root, app) {
       else if (act === 'new-plan') openPlanEditor(app);
       else if (act === 'rest') openRestForm(app);
       else if (act === 'open') openSessionDetail(app, repo.get('workoutSessions', id));
+      else if (act === 'guide') openExerciseGuide(ex.get(id));
     } catch (err) {
       handleError(err);
     }

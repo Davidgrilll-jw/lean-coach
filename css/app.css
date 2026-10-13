@@ -364,3 +364,19 @@ dialog.sheet::backdrop { background: rgba(43, 14, 22, 0.6); }
 .muscles { display: flex; flex-wrap: wrap; gap: 6px; }
 details.more > summary { cursor: pointer; font-weight: 650; font-size: 0.9rem; color: var(--primary); padding: 6px 0; }
 details.more[open] > summary { margin-bottom: 8px; }
+
+/* ---------- exercise illustrations ---------- */
+.art { display: block; width: 100%; max-width: 340px; height: auto; margin: 0 auto; }
+.art-one { max-width: 160px; }
+.art-thumb { width: 52px; max-width: none; flex: none; margin: 0; }
+.art-bg { fill: var(--surface-2); }
+.art-floor { stroke: var(--border); stroke-width: 3; stroke-linecap: round; fill: none; }
+.art-near, .art-far { fill: none; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.art-near { stroke: var(--text); }
+.art-far { stroke: var(--muted); opacity: 0.55; }
+.art-head { fill: var(--text); }
+.art-db { stroke: var(--red); stroke-width: 7; stroke-linecap: round; fill: none; }
+.art-bench { fill: var(--surface); stroke: var(--muted); stroke-width: 1.5; opacity: 0.8; }
+.art-arrow { stroke: var(--muted); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.art-btn { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 14px; }
+ol.cues { margin: 0; padding-left: 22px; display: grid; gap: 6px; font-size: 0.95rem; }

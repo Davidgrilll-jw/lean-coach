@@ -1,6 +1,6 @@
 // Service worker: makes the app shell available offline.
 // Bump CACHE when shipping a new version so old files are dropped.
-const CACHE = 'lean-coach-v3';
+const CACHE = 'lean-coach-v4';
 
 const SHELL = [
   './',
@@ -14,6 +14,7 @@ const SHELL = [
   './js/app.js',
   './js/config.js',
   './js/data/defaults.js',
+  './js/data/exerciseGuide.js',
   './js/data/foods.js',
   './js/domain/dates.js',
   './js/domain/nutrition.js',
@@ -39,6 +40,7 @@ const SHELL = [
   './js/ui/charts.js',
   './js/ui/components.js',
   './js/ui/dom.js',
+  './js/ui/exerciseArt.js',
 ];
 
 self.addEventListener('install', (event) => {
