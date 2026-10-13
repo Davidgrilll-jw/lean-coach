@@ -1,6 +1,6 @@
 // Service worker: makes the app shell available offline.
 // Bump CACHE when shipping a new version so old files are dropped.
-const CACHE = 'lean-coach-v2';
+const CACHE = 'lean-coach-v3';
 
 const SHELL = [
   './',
