@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Lean Coach</title>
+  <meta name="description" content="ติดตามการลดไขมันและรักษากล้ามเนื้อ: อาหาร น้ำหนัก รอบเอว เวท และกิจกรรม">
+  <meta name="theme-color" content="#14532d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Lean Coach">
+  <meta name="robots" content="noindex">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><img src="icons/icon.svg" alt="" width="32" height="32"><span>Lean Coach</span></div>
+      <nav id="sidebar-nav" aria-label="เมนูหลัก"></nav>
+    </aside>
+    <main>
+      <div id="storage-warning" class="notice notice-warn" hidden>
+        เบราว์เซอร์นี้ไม่อนุญาตให้บันทึกข้อมูลถาวร (เช่น โหมดส่วนตัว) ข้อมูลจะหายเมื่อปิดหน้านี้
+      </div>
+      <div id="view" aria-live="polite">
+        <div class="loading"><span class="spinner"></span> กำลังโหลดข้อมูล…</div>
+      </div>
+    </main>
+  </div>
+  <div id="more-menu" class="more-menu" hidden></div>
+  <nav id="tabbar" class="tabbar" aria-label="เมนูหลัก"></nav>
+  <div id="toast-root" class="toast-root"></div>
+  <noscript><p style="padding:24px">Lean Coach ต้องใช้ JavaScript</p></noscript>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

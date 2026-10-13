@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lean Coach — tests</title>
+  <style>
+    body { font-family: system-ui, "Segoe UI", "Noto Sans Thai", sans-serif; margin: 24px; line-height: 1.5; }
+    .pass { color: #15803d; } .fail { color: #b42318; font-weight: 600; }
+    li { margin: 2px 0; } code { background: #f1f1f1; padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Lean Coach — ชุดทดสอบระบบคำนวณและการจัดเก็บ</h1>
+  <p id="summary">กำลังรัน…</p>
+  <ul id="results"></ul>
+  <script type="module">
+    import './domain.test.js';
+    import { run } from './harness.js';
+    const results = await run();
+    const failed = results.filter((r) => !r.pass);
+    document.getElementById('summary').textContent = `${results.length - failed.length}/${results.length} ผ่าน${failed.length ? ` — ล้มเหลว ${failed.length}` : ''}`;
+    document.getElementById('summary').className = failed.length ? 'fail' : 'pass';
+    const list = document.getElementById('results');
+    for (const r of results) {
+      const li = document.createElement('li');
+      li.className = r.pass ? 'pass' : 'fail';
+      li.textContent = `${r.pass ? '✓' : '✗'} ${r.name}${r.pass ? '' : ` — ${r.error}`}`;
+      list.appendChild(li);
+    }
+    window.__testResults = results;
+  </script>
+</body>
+</html>

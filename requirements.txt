@@ -1,0 +1,2 @@
+# Only needed for the optional AI Coach endpoint in server.py.
+anthropic
