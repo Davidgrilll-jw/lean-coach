@@ -24,7 +24,10 @@ export const STORES = [
 ];
 
 const DB_NAME = 'lean-coach';
-const DB_VERSION = 1;
+// Local-only bookkeeping (never exported): changes waiting to be sent to the cloud.
+export const QUEUE_STORE = 'syncQueue';
+
+const DB_VERSION = 2;
 
 function wrap(request) {
   return new Promise((resolve, reject) => {
@@ -38,11 +41,13 @@ export async function createIndexedDbAdapter() {
   const open = indexedDB.open(DB_NAME, DB_VERSION);
   open.onupgradeneeded = () => {
     const db = open.result;
-    for (const s of STORES) {
+    for (const s of [...STORES, QUEUE_STORE]) {
       if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: 'id' });
     }
   };
   const db = await wrap(open);
+  // Let a newer version of the app upgrade the database even if this tab is still open.
+  db.onversionchange = () => db.close();
   const tx = (store, mode) => db.transaction(store, mode).objectStore(store);
   return {
     kind: 'indexeddb',
@@ -55,7 +60,7 @@ export async function createIndexedDbAdapter() {
 
 /** Non-persistent fallback (private windows that block storage, and tests). */
 export function createMemoryAdapter() {
-  const data = new Map(STORES.map((s) => [s, new Map()]));
+  const data = new Map([...STORES, QUEUE_STORE].map((s) => [s, new Map()]));
   return {
     kind: 'memory',
     getAll: async (store) => [...data.get(store).values()].map((r) => structuredClone(r)),

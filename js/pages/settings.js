@@ -3,6 +3,7 @@ import { fmtShort, today } from '../domain/dates.js';
 import { ACTIVITY_LEVELS, activityFactor, bmrMifflin, checkTargets, suggestTargets, tdee } from '../domain/nutrition.js';
 import * as v from '../domain/validate.js';
 import { overview } from '../services/insights.js';
+import * as sync from '../services/sync.js';
 import * as repo from '../store/repo.js';
 import { confirmDialog, download, esc, formValues, handleError, n0, n1, toast } from '../ui/dom.js';
 
@@ -10,10 +11,72 @@ const GOAL_LABEL = { kcal: 'แคลอรี', proteinG: 'โปรตีน',
 
 // The browser fires this once when the app is installable; keep it for the button.
 let installPrompt = null;
+let stopWatching = () => {};
+
+export function leave() {
+  stopWatching();
+  stopWatching = () => {};
+}
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   installPrompt = e;
 });
+
+function syncStatusText(s) {
+  const when = s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : null;
+  const pending = s.pending ? ` · รอส่ง ${s.pending} รายการ` : '';
+  if (s.status === 'syncing') return 'กำลังซิงก์…';
+  if (s.status === 'offline') return `ออฟไลน์ — จะซิงก์เมื่อมีอินเทอร์เน็ต${pending}`;
+  if (s.status === 'error') return `ซิงก์ไม่สำเร็จ: ${s.error}${pending}`;
+  return `${when ? `ซิงก์ล่าสุด ${when} น.` : 'ยังไม่ได้ซิงก์'}${pending}`;
+}
+
+function syncCard() {
+  const s = sync.state;
+  const head = (badge) => `<div class="card-head"><h2>ซิงก์ข้ามอุปกรณ์</h2>${badge}</div>`;
+  if (!s.configured) {
+    return `<section class="card">${head('<span class="badge">ยังไม่ได้ตั้งค่า</span>')}
+      <p class="small muted">แอปนี้ยังไม่ได้เชื่อมกับฐานข้อมูลกลาง ข้อมูลจึงอยู่เฉพาะในอุปกรณ์นี้ วิธีตั้งค่าอยู่ใน README หัวข้อ "ซิงก์ข้ามอุปกรณ์"</p></section>`;
+  }
+  if (!s.user) {
+    return `<section class="card">${head('<span class="badge">ยังไม่ได้เข้าสู่ระบบ</span>')}
+      <form id="sync-form" novalidate>
+        <div class="field-row">
+          <label class="field"><span>อีเมล</span><input name="email" type="email" autocomplete="username" inputmode="email"></label>
+          <label class="field"><span>รหัสผ่าน</span><input name="password" type="password" autocomplete="current-password"></label>
+        </div>
+        <p class="hint">เข้าสู่ระบบด้วยบัญชีเดียวกันบนมือถือและคอมพิวเตอร์ ข้อมูลจะตรงกันอัตโนมัติ <b>เข้าสู่ระบบบนเครื่องที่มีข้อมูลอยู่แล้วเป็นเครื่องแรก</b> แต่ละคนใช้บัญชีของตัวเอง ข้อมูลไม่ปนกัน</p>
+        <div class="btn-row">
+          <button type="button" class="btn btn-ghost" data-act="sync-signup">สร้างบัญชีใหม่</button>
+          <button class="btn btn-primary">เข้าสู่ระบบ</button>
+        </div>
+      </form></section>`;
+  }
+  return `<section class="card">${head('<span class="badge badge-ok">เปิดใช้งาน</span>')}
+    <dl class="kv"><dt>บัญชี</dt><dd>${esc(s.user.email)}</dd><dt>สถานะ</dt><dd id="sync-status">${esc(syncStatusText(s))}</dd></dl>
+    <label class="check" style="margin-top:12px"><input type="checkbox" id="sync-photos" ${sync.syncPhotos() ? 'checked' : ''}> ซิงก์ภาพรูปร่างด้วย (ภาพจะถูกเก็บในฐานข้อมูลกลางของบัญชีคุณ)</label>
+    <div class="btn-row start" style="margin-top:12px">
+      <button class="btn btn-primary" data-act="sync-now">ซิงก์ตอนนี้</button>
+      <button class="btn btn-outline" data-act="sync-signout">ออกจากระบบ</button>
+    </div>
+    <p class="hint" style="margin-top:8px">ซิงก์อัตโนมัติเมื่อเปิดแอป เมื่อบันทึกข้อมูล และเมื่อกลับมาออนไลน์ ใช้งานออฟไลน์ได้ตามปกติ ถ้าแก้รายการเดียวกันจากสองเครื่อง ระบบจะเก็บฉบับที่แก้ล่าสุด</p></section>`;
+}
+
+function syncCredentials(form) {
+  const email = String(form.email.value).trim();
+  const password = form.password.value;
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new v.ValidationError('กรุณากรอกอีเมลให้ถูกต้อง');
+  if (password.length < 8) throw new v.ValidationError('รหัสผ่านต้องยาวอย่างน้อย 8 ตัวอักษร');
+  return [email, password];
+}
+
+const confirmReplace = () =>
+  confirmDialog({
+    title: 'เปลี่ยนบัญชีบนอุปกรณ์นี้?',
+    message: 'อุปกรณ์นี้มีข้อมูลของอีกบัญชีหนึ่งอยู่ ถ้าทำต่อ ข้อมูลในอุปกรณ์นี้จะถูกลบแล้วโหลดข้อมูลของบัญชีที่กำลังเข้าสู่ระบบแทน\n\nข้อมูลของบัญชีเดิมที่ซิงก์แล้วยังอยู่ในระบบ ส่วนที่ยังไม่ได้ซิงก์จะหาย',
+    confirmText: 'ลบแล้วเปลี่ยนบัญชี',
+    danger: true,
+  });
 
 function targetHint(form, bmr, tdeeKcal) {
   const [kcal, p, c, f] = ['kcal', 'proteinG', 'carbG', 'fatG'].map((k) => v.parseNum(form[k].value));
@@ -145,6 +208,8 @@ export function render(root, app) {
       </section>
     </div>
 
+    ${syncCard()}
+
     <section class="card">
       <div class="card-head"><h2>ข้อมูลและการสำรอง</h2><span class="badge ${repo.isPersistent() ? 'badge-ok' : 'badge-warn'}">${repo.isPersistent() ? 'เก็บในอุปกรณ์นี้' : 'ไม่ถาวร'}</span></div>
       <div class="notice notice-warn">ข้อมูลทั้งหมดเก็บในเบราว์เซอร์ของอุปกรณ์นี้ (IndexedDB) ไม่มีการส่งขึ้นเซิร์ฟเวอร์ ข้อมูล<b>จะหาย</b>หากล้างข้อมูลเว็บไซต์/เบราว์เซอร์ ถอนการติดตั้งแอป หรือเปลี่ยนอุปกรณ์ — สำรองข้อมูลเป็นไฟล์เป็นระยะ</div>
@@ -185,11 +250,29 @@ export function render(root, app) {
   nform.oninput = paintHint;
   paintHint();
 
+  // Keep the status line current without redrawing the page (forms may be half filled in).
+  stopWatching();
+  stopWatching = sync.onUpdate((s) => {
+    const el = document.getElementById('sync-status');
+    if (el) el.textContent = syncStatusText(s);
+  });
+  const photosToggle = root.querySelector('#sync-photos');
+  if (photosToggle) photosToggle.onchange = () => sync.setSyncPhotos(photosToggle.checked).catch(handleError);
+
   root.onsubmit = async (e) => {
     e.preventDefault();
     const f = formValues(e.target);
     try {
-      if (e.target.id === 'profile-form') {
+      if (e.target.id === 'sync-form') {
+        const btn = e.target.querySelector('.btn-primary');
+        btn.disabled = true;
+        try {
+          if (await sync.signIn(...syncCredentials(e.target), confirmReplace)) toast('เข้าสู่ระบบแล้ว ข้อมูลกำลังซิงก์');
+        } catch (err) {
+          btn.disabled = false;
+          throw err instanceof v.ValidationError ? err : new v.ValidationError(err.message);
+        }
+      } else if (e.target.id === 'profile-form') {
         const p = {
           sex: f.sex === 'female' ? 'female' : 'male',
           age: v.num(f.age, { label: 'อายุ', min: 14, max: 100, integer: true }),
@@ -287,7 +370,27 @@ export function render(root, app) {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (!act) return;
     try {
-      if (act === 'use-suggested') {
+      if (act === 'sync-signup') {
+        const [email, password] = syncCredentials(root.querySelector('#sync-form'));
+        let result;
+        try {
+          result = await sync.signUp(email, password, confirmReplace);
+        } catch (err) {
+          throw new v.ValidationError(err.message);
+        }
+        if (result === 'confirm-email') toast('สร้างบัญชีแล้ว — เปิดลิงก์ยืนยันในอีเมล แล้วกลับมากด "เข้าสู่ระบบ"');
+        else if (result === 'linked') toast('สร้างบัญชีแล้ว ข้อมูลในเครื่องนี้ถูกอัปโหลดขึ้นบัญชี');
+        app.refresh();
+      } else if (act === 'sync-now') {
+        await sync.syncNow();
+        if (sync.state.status === 'idle') toast('ซิงก์แล้ว');
+        else toast(syncStatusText(sync.state), 'error');
+      } else if (act === 'sync-signout') {
+        if (await confirmDialog({ title: 'ออกจากระบบ?', message: 'ข้อมูลยังอยู่ในอุปกรณ์นี้และใช้งานต่อได้ แต่จะไม่ซิงก์จนกว่าจะเข้าสู่ระบบอีกครั้ง', confirmText: 'ออกจากระบบ' })) {
+          await sync.signOut();
+          app.refresh();
+        }
+      } else if (act === 'use-suggested') {
         for (const k of ['kcal', 'proteinG', 'carbG', 'fatG']) nform[k].value = suggested[k];
         paintHint();
         toast('ใส่ค่าที่แนะนำแล้ว — กด "บันทึกเป้าหมาย" เพื่อยืนยัน');

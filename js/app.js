@@ -7,6 +7,7 @@ import * as photos from './pages/photos.js';
 import * as report from './pages/report.js';
 import * as settings from './pages/settings.js';
 import * as workout from './pages/workout.js';
+import * as sync from './services/sync.js';
 import * as repo from './store/repo.js';
 import { esc, icon } from './ui/dom.js';
 
@@ -93,6 +94,12 @@ async function start() {
     return;
   }
   document.getElementById('storage-warning').hidden = storage.persistent;
+
+  // Data arrived from another device: redraw, unless the user is in the middle of typing.
+  sync.init(() => {
+    const typing = view().contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (!typing && !document.querySelector('dialog[open]')) app.refresh();
+  });
 
   document.addEventListener('click', (e) => {
     if (e.target.closest('#more-btn')) setMore(document.getElementById('more-menu').hidden);

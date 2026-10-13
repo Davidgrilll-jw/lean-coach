@@ -1,19 +1,31 @@
 // Repository: the only module the UI uses to read and write data.
 // Reads are synchronous from an in-memory cache loaded at start-up;
 // writes go through to the storage adapter before the cache is updated.
+// Every local change is announced to listeners (the sync service uses this).
 import { DEFAULT_EXERCISES, DEFAULT_PLANS, USER_ID, defaultSettings } from '../data/defaults.js';
 import { DEFAULT_FOODS } from '../data/foods.js';
-import { STORES, createIndexedDbAdapter, createMemoryAdapter } from './adapters.js';
+import { QUEUE_STORE, STORES, createIndexedDbAdapter, createMemoryAdapter } from './adapters.js';
 
 const EXPORT_FORMAT = 'lean-coach-export';
 const EXPORT_VERSION = 1;
 
 let adapter = null;
 const cache = new Map();
+const listeners = new Set();
 
 function newId() {
   if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Subscribe to local changes: fn({ store, id, deleted, updatedAt }). Returns an unsubscribe function. */
+export function onChange(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+async function emit(store, id, deleted, updatedAt) {
+  for (const fn of listeners) await fn({ store, id, deleted, updatedAt });
 }
 
 async function loadAll() {
@@ -28,6 +40,14 @@ async function seed() {
   await adapter.put('settings', { ...settings, userId: USER_ID, seeded: true });
 }
 
+/** Seed the defaults when there are no settings yet (first run, or after clearLocal). */
+export async function ensureSeeded() {
+  if (cache.get('settings').some((s) => s.id === 'main')) return false;
+  await seed();
+  await loadAll();
+  return true;
+}
+
 export async function init(customAdapter) {
   if (customAdapter) {
     adapter = customAdapter;
@@ -40,10 +60,7 @@ export async function init(customAdapter) {
     }
   }
   await loadAll();
-  if (!cache.get('settings').some((s) => s.id === 'main')) {
-    await seed();
-    await loadAll();
-  }
+  await ensureSeeded();
   return { persistent: adapter.kind !== 'memory', kind: adapter.kind };
 }
 
@@ -55,6 +72,19 @@ export function list(store) {
 
 export function get(store, id) {
   return list(store).find((r) => r.id === id) || null;
+}
+
+function cachePut(store, rec) {
+  const arr = list(store);
+  const i = arr.findIndex((r) => r.id === rec.id);
+  if (i >= 0) arr[i] = rec;
+  else arr.push(rec);
+}
+
+function cacheRemove(store, id) {
+  const arr = list(store);
+  const i = arr.findIndex((r) => r.id === id);
+  if (i >= 0) arr.splice(i, 1);
 }
 
 /** Insert or update. Returns the stored record. */
@@ -69,18 +99,41 @@ export async function save(store, record) {
     updatedAt: now,
   };
   await adapter.put(store, rec);
-  const arr = list(store);
-  const i = arr.findIndex((r) => r.id === rec.id);
-  if (i >= 0) arr[i] = rec;
-  else arr.push(rec);
+  cachePut(store, rec);
+  await emit(store, rec.id, false, now);
   return rec;
 }
 
 export async function remove(store, id) {
   await adapter.remove(store, id);
-  const arr = list(store);
-  const i = arr.findIndex((r) => r.id === id);
-  if (i >= 0) arr.splice(i, 1);
+  cacheRemove(store, id);
+  await emit(store, id, true, new Date().toISOString());
+}
+
+/**
+ * Write a record that came from the cloud (or delete it when `record` is null)
+ * exactly as received: no new timestamp and no change event.
+ */
+export async function applyRemote(store, id, record) {
+  if (record) {
+    await adapter.put(store, record);
+    cachePut(store, record);
+  } else {
+    await adapter.remove(store, id);
+    cacheRemove(store, id);
+  }
+}
+
+// ---------- sync queue (local bookkeeping, one entry per changed record) ----------
+
+export const queueAll = () => adapter.getAll(QUEUE_STORE);
+export const queuePut = (entry) => adapter.put(QUEUE_STORE, entry);
+export const queueRemove = (id) => adapter.remove(QUEUE_STORE, id);
+
+/** Empty this device completely, without seeding (used when another account signs in). */
+export async function clearLocal() {
+  for (const s of [...STORES, QUEUE_STORE]) await adapter.clear(s);
+  await loadAll();
 }
 
 export function settings() {
@@ -117,6 +170,16 @@ export function exportAll({ includePhotos = true } = {}) {
   return { format: EXPORT_FORMAT, version: EXPORT_VERSION, exportedAt: new Date().toISOString(), data };
 }
 
+const keysOf = (stores) => stores.flatMap((s) => list(s).map((r) => [s, r.id]));
+
+/** Announce a wholesale replacement: everything now present is new, everything that vanished is deleted. */
+async function emitReplaced(stores, before) {
+  const now = new Date().toISOString();
+  const present = new Set(keysOf(stores).map(([s, id]) => `${s}:${id}`));
+  for (const [s, id] of before) if (!present.has(`${s}:${id}`)) await emit(s, id, true, now);
+  for (const [s, id] of keysOf(stores)) await emit(s, id, false, now);
+}
+
 /** Replace all data with a previously exported backup. Throws on an invalid file. */
 export async function importAll(backup) {
   if (!backup || backup.format !== EXPORT_FORMAT || typeof backup.data !== 'object') {
@@ -132,18 +195,21 @@ export async function importAll(backup) {
       throw new Error(`ข้อมูลส่วน "${s}" ในไฟล์สำรองไม่ถูกต้อง`);
     }
   }
-  for (const s of STORES) {
-    const rows = backup.data[s];
-    if (rows === undefined) continue;
+  const replaced = STORES.filter((s) => backup.data[s] !== undefined);
+  const before = keysOf(replaced);
+  for (const s of replaced) {
     await adapter.clear(s);
-    for (const r of rows) await adapter.put(s, { ...r, userId: USER_ID });
+    for (const r of backup.data[s]) await adapter.put(s, { ...r, userId: USER_ID });
   }
   await loadAll();
+  await emitReplaced(replaced, before);
 }
 
 /** Delete everything and start again from the defaults. */
 export async function wipe() {
+  const before = keysOf(STORES);
   for (const s of STORES) await adapter.clear(s);
   await seed();
   await loadAll();
+  await emitReplaced(STORES, before);
 }

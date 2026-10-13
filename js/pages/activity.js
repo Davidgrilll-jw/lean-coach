@@ -34,7 +34,7 @@ function openStepsForm(app, date = today()) {
           const f = formValues(form);
           const d = v.date(f.date);
           const same = logs().find((a) => a.type === 'steps' && a.date === d);
-          await repo.save('activityLogs', { ...(same || {}), type: 'steps', date: d, steps: v.num(f.steps, v.LIMITS.steps) });
+          await repo.save('activityLogs', { ...(same || { id: `steps-${d}` }), type: 'steps', date: d, steps: v.num(f.steps, v.LIMITS.steps) });
           close();
           toast('บันทึกจำนวนก้าวแล้ว');
           app.refresh();

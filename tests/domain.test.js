@@ -7,6 +7,7 @@ import { weeklyReport } from '../js/domain/report.js';
 import { ValidationError, num, parseNum } from '../js/domain/validate.js';
 import { dailyWeights, progressToTarget, rollingAverage, weeklyRate, weightSummary } from '../js/domain/weight.js';
 import { est1RM, exerciseHistory, muscleSets, progressionAdvice, recoveryConflicts, strengthChange } from '../js/domain/workout.js';
+import { createSync } from '../js/services/syncCore.js';
 import { createMemoryAdapter } from '../js/store/adapters.js';
 import * as repo from '../js/store/repo.js';
 import { eq, near, ok, test, throws } from './harness.js';
@@ -386,4 +387,177 @@ test('storage: export → wipe → import restores the data; bad files are rejec
   await throws(() => repo.importAll({ hello: 'world' }));
   await throws(() => repo.importAll({ format: 'lean-coach-export', version: 1, data: { settings: [] } }));
   eq(repo.list('weightLogs').length, 1, 'a rejected import must not change data');
+});
+
+// ---------- cloud sync (two devices against a fake server) ----------
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Stands in for the server table: newest edit wins, rows are returned oldest change first. */
+function fakeRemote(pageSize = 4) {
+  const rows = new Map();
+  let seq = 0;
+  return {
+    rows,
+    pageSize,
+    async pull(cursor, includePhotos) {
+      return [...rows.values()]
+        .filter((r) => (!cursor || r.updatedAt >= cursor) && (includePhotos || r.store !== 'photos'))
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? -1 : 1))
+        .slice(0, pageSize)
+        .map((r) => JSON.parse(JSON.stringify(r)));
+    },
+    async push(list) {
+      for (const r of list) {
+        const key = `${r.store}:${r.id}`;
+        const old = rows.get(key);
+        if (old && r.clientUpdatedAt < old.clientUpdatedAt) continue;
+        seq += 1;
+        rows.set(key, { ...JSON.parse(JSON.stringify(r)), updatedAt: String(seq).padStart(8, '0') });
+      }
+    },
+  };
+}
+
+let activeDevice = null;
+repo.onChange((change) => activeDevice && activeDevice.engine.enqueue(change));
+
+function device(remote, opts = {}) {
+  const store = {};
+  const d = { adapter: createMemoryAdapter(), photos: false };
+  d.engine = createSync({ repo, remote, meta: { get: (k) => store[k] ?? null, set: (k, v) => void (store[k] = v) }, includePhotos: () => d.photos, ...opts });
+  /** Make this the device in use (the repository is a singleton, so only one is live at a time). */
+  d.use = async () => {
+    activeDevice = null;
+    await repo.init(d.adapter);
+    activeDevice = d;
+  };
+  return d;
+}
+
+test('sync: a second device receives the first device\'s data instead of overwriting it', async () => {
+  const remote = fakeRemote();
+  const phone = device(remote);
+  const pc = device(remote);
+
+  activeDevice = null; // the phone was used before it had an account
+  await repo.init(phone.adapter);
+  await repo.saveSettings({ profileConfirmed: true, goals: { kcal: 2222 } });
+  const w1 = await repo.save('weightLogs', { date: TODAY, kg: 80.4 });
+  await phone.use();
+  await phone.engine.run();
+  ok(remote.rows.has(`weightLogs:${w1.id}`), 'first sync uploads data created before sign-in');
+  eq((await repo.queueAll()).length, 0);
+
+  await pc.use(); // fresh install with placeholder settings
+  eq(repo.settings().goals.kcal, 1900);
+  const r = await pc.engine.run();
+  ok(r.changed > 0);
+  eq(repo.settings().goals.kcal, 2222, 'account settings win over the new device\'s placeholders');
+  eq(repo.settings().profileConfirmed, true);
+  eq(repo.get('weightLogs', w1.id).kg, 80.4);
+  eq(remote.rows.get('settings:main').data.goals.kcal, 2222);
+  eq((await repo.queueAll()).length, 0);
+  activeDevice = null;
+});
+
+test('sync: edits and deletions travel both ways; the latest edit wins', async () => {
+  const remote = fakeRemote();
+  const phone = device(remote);
+  const pc = device(remote);
+  await phone.use();
+  await phone.engine.run();
+  const a = await repo.save('weightLogs', { date: TODAY, kg: 80 });
+  const b = await repo.save('weightLogs', { date: addDays(TODAY, -1), kg: 81 });
+  await phone.engine.run();
+
+  await pc.use();
+  await pc.engine.run();
+  eq(repo.list('weightLogs').length, 2);
+  await repo.remove('weightLogs', a.id);
+  await repo.save('weightLogs', { ...repo.get('weightLogs', b.id), kg: 80.5 });
+  const c = await repo.save('foodLogs', { date: TODAY, meal: 1, name: 'x', grams: 100, kcal: 100, p: 1, c: 1, f: 1 });
+  await pc.engine.run();
+
+  await phone.use();
+  await sleep(3);
+  await repo.save('weightLogs', { ...repo.get('weightLogs', a.id), note: 'edited offline, but deleted elsewhere earlier' });
+  await phone.engine.run();
+  eq(repo.get('weightLogs', b.id).kg, 80.5, 'edit from the other device arrives');
+  ok(repo.get('foodLogs', c.id), 'new record from the other device arrives');
+  ok(repo.get('weightLogs', a.id), 'the later local edit beats the earlier remote deletion');
+  eq(remote.rows.get(`weightLogs:${a.id}`).deleted, false);
+
+  await pc.use();
+  await sleep(3);
+  await repo.save('weightLogs', { ...repo.get('weightLogs', b.id), kg: 79.9 }); // PC edits last
+  await phone.use();
+  await phone.engine.run(); // phone has nothing newer for b
+  await pc.use();
+  await pc.engine.run();
+  await phone.use();
+  await phone.engine.run();
+  eq(repo.get('weightLogs', b.id).kg, 79.9);
+  ok(repo.get('weightLogs', a.id), 'record restored on the phone is back on the PC too');
+  activeDevice = null;
+});
+
+test('sync: an older pending edit loses to a newer server copy', async () => {
+  const remote = fakeRemote();
+  const phone = device(remote);
+  const pc = device(remote);
+  await phone.use();
+  const w = await repo.save('weightLogs', { date: TODAY, kg: 80 });
+  await phone.engine.run();
+  await pc.use();
+  await pc.engine.run();
+
+  await phone.use();
+  await repo.save('weightLogs', { ...repo.get('weightLogs', w.id), kg: 70 }); // stays unsynced
+  await pc.use();
+  await sleep(3);
+  await repo.save('weightLogs', { ...repo.get('weightLogs', w.id), kg: 90 });
+  await pc.engine.run();
+  await phone.use();
+  await phone.engine.run();
+  eq(repo.get('weightLogs', w.id).kg, 90);
+  eq(remote.rows.get(`weightLogs:${w.id}`).data.kg, 90);
+  eq((await repo.queueAll()).length, 0);
+  activeDevice = null;
+});
+
+test('sync: photos stay on the device unless photo sync is switched on', async () => {
+  const remote = fakeRemote();
+  const phone = device(remote);
+  await phone.use();
+  const p = await repo.save('photos', { date: TODAY, image: 'data:image/jpeg;base64,AAAA' });
+  await phone.engine.run();
+  ok(!remote.rows.has(`photos:${p.id}`));
+  eq((await repo.queueAll()).length, 1, 'the photo waits in the queue');
+  phone.photos = true;
+  await phone.engine.run();
+  ok(remote.rows.has(`photos:${p.id}`));
+  eq((await repo.queueAll()).length, 0);
+  activeDevice = null;
+});
+
+test('sync: wiping a device removes the account data everywhere', async () => {
+  const remote = fakeRemote();
+  const phone = device(remote);
+  const pc = device(remote);
+  await phone.use();
+  const w = await repo.save('weightLogs', { date: TODAY, kg: 80 });
+  await phone.engine.run();
+  await pc.use();
+  await pc.engine.run();
+  ok(repo.get('weightLogs', w.id));
+  await phone.use();
+  await repo.wipe();
+  await phone.engine.run();
+  eq(remote.rows.get(`weightLogs:${w.id}`).deleted, true);
+  await pc.use();
+  await pc.engine.run();
+  eq(repo.get('weightLogs', w.id), null);
+  ok(repo.settings(), 'settings are reset, not removed');
+  activeDevice = null;
 });
