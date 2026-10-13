@@ -126,7 +126,9 @@ python server.py
 
 ## Deploy
 
-**ยังไม่ได้ deploy ขึ้นอินเทอร์เน็ต** — ทดสอบแล้วบน `localhost` เท่านั้น ขั้นตอนเมื่อพร้อม:
+เวอร์ชัน static อยู่บน GitHub Pages ที่ <https://davidgrilll-jw.github.io/lean-coach/> (ต้นทาง: branch `main`, โฟลเดอร์ root) ทุกครั้งที่ push ขึ้น `main` เว็บจะอัปเดตเองภายใน 1–2 นาที AI Coach ใช้ไม่ได้บนเวอร์ชันนี้เพราะไม่มีเซิร์ฟเวอร์
+
+ทางเลือกในการ deploy:
 
 **แบบ static (แนะนำ, ฟรี, ได้ HTTPS → ติดตั้งเป็นแอปบนมือถือได้)**
 อัปโหลดทั้งโฟลเดอร์ `lean-coach/` ไปที่ GitHub Pages, Netlify, Cloudflare Pages หรือ Vercel ไม่ต้องตั้งค่า build
